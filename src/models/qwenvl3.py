@@ -3,7 +3,7 @@
 import torch
 from dataclasses import dataclass
 from typing import List, Dict, Optional
-from transformers import AutoModelForVision2Seq, AutoProcessor
+from transformers import AutoModelForImageTextToText, AutoProcessor
 
 
 @dataclass
@@ -38,18 +38,21 @@ class Qwen3VLModel:
         if self._model is None:
             print(f"[Qwen3VLModel] Loading model: {self.model_name}")
             # Use AutoModelForVision2Seq which will load the correct architecture from config
-            self._model = AutoModelForVision2Seq.from_pretrained(
+            self._model = AutoModelForImageTextToText.from_pretrained(
                 self.model_name,
                 torch_dtype=torch.bfloat16,
                 device_map=self.device,
-                trust_remote_code=True  # Required for Qwen3-VL
+                trust_remote_code=True,  # Required for Qwen3-VL
+                attn_implementation="flash_attention_3"
             )
+            self._model = torch.compile(self._model)
             self._model.eval()
 
             self._processor = AutoProcessor.from_pretrained(
                 self.model_name,
                 trust_remote_code=True
             )
+            print(f"[Qwen3VLModel] Attention mechanism: {self._model.config._attn_implementation}")
             print(f"[Qwen3VLModel] Model loaded on {self.device}")
 
         return self._model, self._processor
@@ -104,6 +107,7 @@ class Qwen3VLModel:
             "top_k": kwargs.get("top_k", config.top_k),
             "repetition_penalty": kwargs.get("repetition_penalty", config.repetition_penalty),
             "do_sample": kwargs.get("do_sample", config.do_sample),
+            "use_cache": True,
         }
         
         with torch.no_grad():

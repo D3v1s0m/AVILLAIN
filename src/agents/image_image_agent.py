@@ -18,6 +18,7 @@ from typing import List, Dict
 import numpy as np
 import torch
 from PIL import Image
+import time
 
 from .base_agent import BaseAgent, AgentConfig, AgentAnalysis, EvidenceItem, SharedModels
 from .prompts import AGENT3_PROMPT1, AGENT3_PROMPT2, AGENT3_PROMPT3
@@ -72,7 +73,7 @@ class ImageImageAgent(BaseAgent):
                 query_embedding = query_embedding.float().cpu().numpy()
 
             # Release image model after encoding
-            self.shared_models.release_image_model()
+            # self.shared_models.release_image_model()
 
             # Normalize embeddings
             query_embedding = query_embedding / np.linalg.norm(query_embedding, axis=-1, keepdims=True)
@@ -102,7 +103,7 @@ class ImageImageAgent(BaseAgent):
             return results
 
         except Exception as e:
-            self.shared_models.release_image_model()
+            # self.shared_models.release_image_model()
             print(f"[{self.name}] Error in image retrieval: {e}")
             import traceback
             traceback.print_exc()
@@ -139,7 +140,7 @@ class ImageImageAgent(BaseAgent):
                 query_embedding = query_embedding.float().cpu().numpy()
 
             # Release image model after encoding
-            self.shared_models.release_image_model()
+            # self.shared_models.release_image_model()
 
             # Normalize embeddings
             query_embedding = query_embedding / np.linalg.norm(query_embedding, axis=-1, keepdims=True)
@@ -169,7 +170,7 @@ class ImageImageAgent(BaseAgent):
             return results
 
         except Exception as e:
-            self.shared_models.release_image_model()
+            # self.shared_models.release_image_model()
             print(f"[{self.name}] Error in text-to-image retrieval: {e}")
             import traceback
             traceback.print_exc()
@@ -303,6 +304,7 @@ class ImageImageAgent(BaseAgent):
 
         # Strategy 2: Retrieve top-k images using claim text (text-to-image)
         print(f"[{self.name}] Retrieving top-{self.num_evidence_text} images using claim text...")
+        start_time = time.time()
         text_items = self.retrieve_images_by_text(
             query_text=claim_text,
             claim_id=claim_id,
@@ -318,6 +320,8 @@ class ImageImageAgent(BaseAgent):
         evidence_items = self._deduplicate_evidence(all_evidence_items)
         # Sort by score descending
         evidence_items.sort(key=lambda x: x.score, reverse=True)
+        end_time = time.time()
+        print(f"[{self.name}] Text-to-image retrieval took {end_time - start_time:.2f} seconds")
         print(f"[{self.name}] Total unique evidence images: {len(evidence_items)}")
 
         if not evidence_items:
@@ -328,6 +332,7 @@ class ImageImageAgent(BaseAgent):
             )
 
         # Generate VLM analysis with text sources from Agent 1 and Agent 2
+        start_time = time.time()
         analysis_text = self._generate_analysis(
             claim_text=claim_text,
             claim_images=claim_images,
@@ -337,6 +342,8 @@ class ImageImageAgent(BaseAgent):
             text_text_analysis=text_text_analysis,
             image_text_analysis=image_text_analysis
         )
+        end_time = time.time()
+        print(f"[{self.name}] VLM analysis generation took {end_time - start_time:.2f} seconds")
 
         return AgentAnalysis(
             agent_name=self.name,

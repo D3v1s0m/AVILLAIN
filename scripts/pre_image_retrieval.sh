@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # Configuration
-SPLIT="val"           # Options: train, val, test
+SPLIT="train"           # Options: train, val, test
 MODEL_NAME="OpenSearch-AI/Ops-MM-embedding-v1-7B"
 MODEL_SUFFIX="7B"      # Model size suffix for output folder
 
 # Calculate samples per job (ceil division)
-START_IDX=0
-END_IDX=152
+START_IDX=664
+END_IDX=793
 
 echo "Job $SLURM_ARRAY_TASK_ID: Processing claims $START_IDX to $END_IDX"
 echo "Split: $SPLIT, Model: $MODEL_NAME, Model suffix: $MODEL_SUFFIX"

@@ -95,7 +95,7 @@ def embed_texts(texts, model, batch_size=8, desc=None):
 
     batch_iter = range(0, len(texts), batch_size)
     if desc:
-        batch_iter = tqdm(batch_iter, desc=desc, leave=False)
+        batch_iter = tqdm(batch_iter, desc=desc, leave=False, position=1, disable=not sys.stdout.isatty())
 
     for i in batch_iter:
         batch_texts = texts[i:i + batch_size]
@@ -195,7 +195,7 @@ def process_store(store_name, input_path, output_dir, model, args, claim_range):
     processed_count = 0
     skipped_count = 0
 
-    for claim_id in tqdm(claim_range, desc=f"Processing {store_name}"):
+    for claim_id in tqdm(claim_range, desc=f"Processing {store_name}", position=0):
         json_path = os.path.join(input_path, f"{claim_id}.json")
 
         if not os.path.exists(json_path):

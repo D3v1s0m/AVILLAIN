@@ -53,7 +53,7 @@ class TextTextAgent(BaseAgent):
         """Encode a query using the text embedding model."""
         model = self.shared_models.use_text_model()
         result = model.encode_queries(query)
-        self.shared_models.release_text_model()
+        # self.shared_models.release_text_model()
         return result
 
     def retrieve_text_evidence(
@@ -103,7 +103,7 @@ class TextTextAgent(BaseAgent):
             reranker = self.shared_models.use_reranker()
             rerank_top_k = top_k
             reranked = reranker.rerank(query, candidate_docs, top_k=rerank_top_k)
-            self.shared_models.release_reranker()
+            # self.shared_models.release_reranker()
 
             # Step 4: Build results from reranked order
             results = []

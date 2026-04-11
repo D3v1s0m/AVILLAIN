@@ -14,6 +14,7 @@ import sys
 import pickle
 import numpy as np
 import torch
+import time
 
 
 # Add src directory to path for models import
@@ -110,6 +111,10 @@ class SharedModels:
         # Track which model is currently on GPU (besides VLM)
         self._current_on_gpu = None  # 'text', 'image', 'reranker', or None
 
+        self._models_on_gpu = {}  # name -> model
+        self._model_sizes = {}  # GB estimate
+        self._last_used = {}  # for LRU
+
     def load_vlm_model(self):
         """Load VLM model (Qwen3-VL or Gemini) for all agents."""
         if self._vlm is None:
@@ -152,6 +157,52 @@ class SharedModels:
         """Check if using Qwen3-VL-Thinking model (which uses <think> tags)."""
         return "Thinking" in self.config.vlm_model and not self._is_gemini
 
+    def _get_free_vram(self) -> int:
+        total = torch.cuda.get_device_properties(0).total_memory
+        reserved = torch.cuda.memory_reserved(0)
+        free = total - reserved
+        return free
+
+    def ensure_on_gpu(self, name, model, move_fn):
+        # If already on GPU → just mark used
+        if name in self._models_on_gpu:
+            self._last_used[name] = time.time()
+            return
+
+        # Estimate needed memory (rough fallback)
+        required = 4 * 1024 ** 3  # assume ~4GB if unknown
+
+        # Evict until enough space
+        while self._get_free_vram() < required:
+            self._evict_one()
+
+        # Move model to GPU
+        move_fn()
+
+        self._models_on_gpu[name] = model
+        self._last_used[name] = time.time()
+
+    def _evict_one(self):
+        # never evict VLM
+        candidates = [k for k in self._models_on_gpu if k != "vlm"]
+
+        if not candidates:
+            raise RuntimeError("No model can be evicted!")
+
+        # Least recently used
+        oldest = min(candidates, key=lambda k: self._last_used[k])
+
+        model = self._models_on_gpu.pop(oldest)
+
+        if oldest == "image":
+            model.base_model.cpu()
+        elif oldest == "text":
+            model.to("cpu")
+        elif oldest == "reranker":
+            model.to("cpu")
+
+        torch.cuda.empty_cache()
+
     def _offload_current_model(self):
         """Move current model off GPU to CPU."""
         if self._current_on_gpu == 'text' and self._text_model is not None:
@@ -179,22 +230,41 @@ class SharedModels:
         if self._text_model is None:
             print(f"[SharedModels] Loading text model ({self.config.text_model_type}): {self.config.text_model}")
 
+            # if self.config.text_model_type == 'mxbai':
+            #     config = MxbaiEmbeddingConfig(
+            #         model_name=self.config.text_model,
+            #         device='cpu'  # Load on CPU first
+            #     )
+            #     self._text_model = MxbaiEmbedding(config)
+            # elif self.config.text_model_type == 'nomic':
+            #     config = NomicEmbeddingConfig(
+            #         model_name=self.config.text_model,
+            #         device='cpu'  # Load on CPU first
+            #     )
+            #     self._text_model = NomicEmbedding(config)
+            # else:  # default to qwen
+            #     config = QwenEmbeddingConfig(
+            #         model_name=self.config.text_model,
+            #         device='cpu'  # Load on CPU first
+            #     )
+            #     self._text_model = Qwen3Embedding(config)
+
             if self.config.text_model_type == 'mxbai':
                 config = MxbaiEmbeddingConfig(
                     model_name=self.config.text_model,
-                    device='cpu'  # Load on CPU first
+                    device=self.device,
                 )
                 self._text_model = MxbaiEmbedding(config)
             elif self.config.text_model_type == 'nomic':
                 config = NomicEmbeddingConfig(
                     model_name=self.config.text_model,
-                    device='cpu'  # Load on CPU first
+                    device=self.device,
                 )
                 self._text_model = NomicEmbedding(config)
             else:  # default to qwen
                 config = QwenEmbeddingConfig(
                     model_name=self.config.text_model,
-                    device='cpu'  # Load on CPU first
+                    device=self.device,
                 )
                 self._text_model = Qwen3Embedding(config)
 
@@ -205,9 +275,13 @@ class SharedModels:
         if self._image_model is None:
             print(f"[SharedModels] Loading image model: {self.config.image_model}")
             # Load to CPU first
+            # self._image_model = OpsMMEmbeddingV1(
+            #     self.config.image_model,
+            #     device='cpu'
+            # )
             self._image_model = OpsMMEmbeddingV1(
                 self.config.image_model,
-                device='cpu'
+                device=self.device,
             )
         return self._image_model
 
@@ -228,18 +302,32 @@ class SharedModels:
             reranker_type = "mxbai" if is_mxbai else "qwen"
             print(f"[SharedModels] Loading reranker ({reranker_type}): {self.config.reranker_model}")
 
+            # if is_mxbai:
+            #     self._reranker = MxbaiReranker(
+            #         MxbaiRerankerConfig(
+            #             model_name=self.config.reranker_model,
+            #             device='cpu'
+            #         )
+            #     )
+            # else:
+            #     self._reranker = Qwen3Reranker(
+            #         RerankerConfig(
+            #             model_name=self.config.reranker_model,
+            #             device='cpu'
+            #         )
+            #     )
             if is_mxbai:
                 self._reranker = MxbaiReranker(
                     MxbaiRerankerConfig(
                         model_name=self.config.reranker_model,
-                        device='cpu'
+                        device=self.device,
                     )
                 )
             else:
                 self._reranker = Qwen3Reranker(
                     RerankerConfig(
                         model_name=self.config.reranker_model,
-                        device='cpu'
+                        device=self.device,
                     )
                 )
         return self._reranker
@@ -247,10 +335,10 @@ class SharedModels:
     def use_text_model(self):
         """Get text model, ensuring it's on GPU. Call release_text_model() when done."""
         self.load_text_model()
-        if self._current_on_gpu != 'text':
-            self._offload_current_model()
-            self._text_model.to(self.device)
-            self._current_on_gpu = 'text'
+        # if self._current_on_gpu != 'text':
+        #     self._offload_current_model()
+        #     self._text_model.to(self.device)
+        #     self._current_on_gpu = 'text'
         return self._text_model
 
     def release_text_model(self):
@@ -261,12 +349,12 @@ class SharedModels:
     def use_image_model(self):
         """Get image model, ensuring it's on GPU. Call release_image_model() when done."""
         self.load_image_model()
-        if self._current_on_gpu != 'image':
-            self._offload_current_model()
-            # OpsMMEmbeddingV1 uses base_model
-            self._image_model.base_model.to(self.device)
-            self._image_model.device = self.device
-            self._current_on_gpu = 'image'
+        # if self._current_on_gpu != 'image':
+        #     self._offload_current_model()
+        #     # OpsMMEmbeddingV1 uses base_model
+        #     self._image_model.base_model.to(self.device)
+        #     self._image_model.device = self.device
+        #     self._current_on_gpu = 'image'
         return self._image_model
 
     def release_image_model(self):
@@ -277,15 +365,15 @@ class SharedModels:
     def use_reranker(self):
         """Get reranker model, ensuring it's on GPU. Call release_reranker() when done."""
         self.load_reranker()
-        if self._current_on_gpu != 'reranker':
-            self._offload_current_model()
-            # MxbaiReranker uses .to(), Qwen3Reranker uses .model
-            if self._is_mxbai_reranker():
-                self._reranker.to(self.device)
-            else:
-                self._reranker.model.to(self.device)
-            self._reranker.device = self.device
-            self._current_on_gpu = 'reranker'
+        # if self._current_on_gpu != 'reranker':
+        #     self._offload_current_model()
+        #     # MxbaiReranker uses .to(), Qwen3Reranker uses .model
+        #     if self._is_mxbai_reranker():
+        #         self._reranker.to(self.device)
+        #     else:
+        #         self._reranker.model.to(self.device)
+        #     self._reranker.device = self.device
+        #     self._current_on_gpu = 'reranker'
         return self._reranker
 
     def release_reranker(self):

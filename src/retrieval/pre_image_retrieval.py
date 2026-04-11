@@ -4,6 +4,7 @@ This script pre-builds image embeddings to avoid re-calculating them during retr
 """
 
 import os
+import sys
 import argparse
 import pickle
 import torch
@@ -112,13 +113,13 @@ def embed_images_batch(images, model, batch_size=8, desc=None):
 
     batch_iter = range(0, len(images), batch_size)
     if desc:
-        batch_iter = tqdm(batch_iter, desc=desc, leave=False)
+        batch_iter = tqdm(batch_iter, desc=desc, leave=False, position=1, disable=not sys.stdout.isatty())
 
     for i in batch_iter:
         batch_images = images[i:i + batch_size]
 
         # Get image embeddings
-        embeddings = model.get_image_embeddings(batch_images)
+        embeddings = model.get_image_embeddings(batch_images, show_progress=False)
 
         # Convert to numpy if tensor (convert bfloat16 to float32 first)
         if isinstance(embeddings, torch.Tensor):
@@ -175,7 +176,7 @@ def main():
     skipped_count = 0
     total_images = 0
 
-    for claim_id in tqdm(range(args.start_idx, args.end_idx), desc="Processing claims"):
+    for claim_id in tqdm(range(args.start_idx, args.end_idx), desc="Processing claims", position=0):
         # Path to claim's image directory
         claim_image_dir = os.path.join(args.input_dir, str(claim_id))
 

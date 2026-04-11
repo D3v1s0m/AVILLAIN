@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # Configuration
-SPLIT="val"           # Options: train, val, test
+SPLIT="train"           # Options: train, val, test
 MODEL_TYPE="mxbai"     # Options: qwen, mxbai
 MODEL_NAME="mixedbread-ai/mxbai-embed-large-v1"  # For qwen: Qwen/Qwen3-Embedding-8B, For mxbai: mixedbread-ai/mxbai-embed-large-v1
 MODEL_SUFFIX="0d3B"     # Model size suffix for output folder (e.g., 8B, mxbai)
 
 START_IDX=0
-END_IDX=152
+END_IDX=10
 
 echo "Split: $SPLIT, Model type: $MODEL_TYPE, Model suffix: $MODEL_SUFFIX"
 
