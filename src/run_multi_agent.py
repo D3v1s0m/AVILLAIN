@@ -14,7 +14,7 @@ import yaml
 # Add src to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from agents import MultiAgentPipeline
+from agents import MultiAgentPipeline, AgenticPipeline, AgenticControllerConfig
 from agents.pipeline import PipelineConfig, result_to_submission_format
 from agents.base_agent import AgentConfig
 
@@ -160,6 +160,8 @@ Examples:
     parser.add_argument('--preload_models', action='store_true', help='Preload all models')
     parser.add_argument('--device', type=str, default=None, help='Device to run on')
     parser.add_argument('--target', type=str, default=None, help='Target dataset (val, test)')
+    parser.add_argument('--mode', type=str, default=None, choices=['sequential', 'agentic'],
+                        help='Pipeline mode: sequential (default) or agentic')
 
     args = parser.parse_args()
 
@@ -228,6 +230,17 @@ Examples:
     start_idx = get_cfg(args.start_idx, 'processing', 'start_idx', default=None)
     end_idx = get_cfg(args.end_idx, 'processing', 'end_idx', default=None)
     save_intermediate_output = get_nested(cfg, 'processing', 'save_intermediate_output', default=False)
+    mode = get_cfg(args.mode, 'processing', 'mode', default='sequential')
+
+    # Agentic controller options
+    agentic_max_tool_calls_total = get_nested(cfg, 'agentic', 'max_tool_calls_total', default=9)
+    agentic_max_iterations = get_nested(cfg, 'agentic', 'max_iterations', default=3)
+    agentic_max_questions = get_nested(cfg, 'agentic', 'max_questions', default=8)
+    agentic_max_images_per_iteration = get_nested(cfg, 'agentic', 'max_images_per_iteration', default=3)
+    agentic_max_new_questions_per_iteration = get_nested(cfg, 'agentic', 'max_new_questions_per_iteration', default=3)
+    agentic_confidence_threshold = get_nested(cfg, 'agentic', 'confidence_threshold', default=0.78)
+    agentic_min_retrieval_tools_before_verdict = get_nested(cfg, 'agentic', 'min_retrieval_tools_before_verdict', default=1)
+    agentic_save_trace = get_nested(cfg, 'agentic', 'save_trace', default=True)
 
     # Create agent config
     agent_config = AgentConfig(
@@ -276,6 +289,7 @@ Examples:
     print(f"  Reranker: {'Enabled' if use_reranker else 'Disabled'}" + (f" (fetch_k={reranker_fetch_k})" if use_reranker else ""))
     print(f"\nProcessing:")
     print(f"  Save intermediate outputs: {'Enabled' if save_intermediate_output else 'Disabled'}")
+    print(f"  Mode: {mode}")
     print(f"\nModels:")
     print(f"  Text Model: {agent_config.text_model} ({agent_config.text_model_type})")
     print(f"  Image Model: {agent_config.image_model}")
@@ -283,6 +297,12 @@ Examples:
     if use_reranker:
         print(f"  Reranker: {agent_config.reranker_model}")
     print(f"  Device: {agent_config.device}")
+    if mode == 'agentic':
+        print(f"\nAgentic Controller:")
+        print(f"  Max tool calls: {agentic_max_tool_calls_total}")
+        print(f"  Max iterations: {agentic_max_iterations}")
+        print(f"  Max questions: {agentic_max_questions}")
+        print(f"  Confidence threshold: {agentic_confidence_threshold}")
 
     # Load dataset
     print(f"\nLoading data from {data_path}")
@@ -309,7 +329,20 @@ Examples:
     print(f"Processing samples [{proc_start_idx}:{proc_end_idx}] = {len(samples)} samples")
 
     # Create pipeline
-    pipeline = MultiAgentPipeline(pipeline_config)
+    if mode == 'agentic':
+        controller_config = AgenticControllerConfig(
+            max_tool_calls_total=agentic_max_tool_calls_total,
+            max_iterations=agentic_max_iterations,
+            max_questions=agentic_max_questions,
+            max_images_per_iteration=agentic_max_images_per_iteration,
+            max_new_questions_per_iteration=agentic_max_new_questions_per_iteration,
+            confidence_threshold=agentic_confidence_threshold,
+            min_retrieval_tools_before_verdict=agentic_min_retrieval_tools_before_verdict,
+            save_trace=agentic_save_trace,
+        )
+        pipeline = AgenticPipeline(pipeline_config, controller_config=controller_config)
+    else:
+        pipeline = MultiAgentPipeline(pipeline_config)
 
     # Optionally preload all models
     if preload_models:

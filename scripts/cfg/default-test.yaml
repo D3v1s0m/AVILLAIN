@@ -64,6 +64,7 @@ retrieval:
 # Processing Options
 # =============================================================================
 processing:
+  mode: "sequential"    # Options: sequential, agentic
   preload_models: true     # Preload all models before processing
   max_samples: null        # Maximum samples to process (null = all)
   save_intermediate_output: true  # Save all agent outputs (hyde, agent1-5)
@@ -71,6 +72,19 @@ processing:
   # Parallel processing (set by SLURM array job, can override)
   start_idx: null          # Start index (inclusive)
   end_idx: null            # End index (exclusive)
+
+# =============================================================================
+# Agentic Controller Options
+# =============================================================================
+agentic:
+  max_tool_calls_total: 9
+  max_iterations: 3
+  max_questions: 8
+  max_images_per_iteration: 3
+  max_new_questions_per_iteration: 3
+  confidence_threshold: 0.78
+  min_retrieval_tools_before_verdict: 1
+  save_trace: true
 
 # =============================================================================
 # Evaluation Configuration

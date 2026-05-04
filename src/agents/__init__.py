@@ -24,6 +24,8 @@ from .image_text_agent import ImageTextAgent
 from .image_image_agent import ImageImageAgent
 from .qa_generation_agent import QAGenerationAgent, QAPair, QAGenerationResult
 from .verdict_agent import VerdictAgent, VerdictResult
+from .agentic_pipeline import AgenticPipeline, AgenticControllerConfig
+from .agentic_tools import AgenticTools, TOOL_CALL_FORMATS, TOOL_RESULT_FORMAT
 from .pipeline import (
     MultiAgentPipeline,
     PipelineConfig,
@@ -45,6 +47,11 @@ __all__ = [
     'QAGenerationResult',
     'VerdictAgent',
     'VerdictResult',
+    'AgenticPipeline',
+    'AgenticControllerConfig',
+    'AgenticTools',
+    'TOOL_CALL_FORMATS',
+    'TOOL_RESULT_FORMAT',
     'MultiAgentPipeline',
     'PipelineConfig',
     'PipelineResult',
