@@ -8,12 +8,33 @@ Tools are retrieval-only and return JSON payloads.
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .agentic_tools import AgenticTools, TOOL_CALL_FORMATS
 from .base_agent import AgentAnalysis, EvidenceItem, SharedModels
 from .pipeline import PipelineConfig, PipelineResult
 from .prompts import AGENTIC_CONTROLLER_PROMPT, AGENTIC_FINAL_ANSWER_PROMPT
+
+
+def _convert_to_serializable(obj: Any) -> Any:
+    """Convert numpy/pandas types to native Python types for JSON serialization."""
+    if obj is None or isinstance(obj, (str, bool)):
+        return obj
+    
+    # Handle numpy types
+    if hasattr(obj, "item"):  # numpy scalar types have .item() method
+        return obj.item()
+    
+    if isinstance(obj, dict):
+        return {k: _convert_to_serializable(v) for k, v in obj.items()}
+    
+    if isinstance(obj, (list, tuple)):
+        return [_convert_to_serializable(item) for item in obj]
+    
+    if isinstance(obj, (int, float)):
+        return obj
+    
+    return obj
 
 
 @dataclass
@@ -104,11 +125,35 @@ class AgenticPipeline:
         iter_bonus = min(0.15, 0.05 * memory.iterations)
         memory.confidence = min(1.0, (0.55 * q_cov) + (0.30 * src_div) + iter_bonus)
 
+    def _evidence_brief_for_prompt(self, memory: AgenticSessionMemory, limit: int = 8) -> List[Dict]:
+        """Keep enough evidence in memory for follow-up planning without bloating prompts."""
+        brief: List[Dict] = []
+        for item in memory.evidence[-limit:]:
+            if not isinstance(item, dict):
+                continue
+            text = (item.get("text", "") or "").strip()
+            if len(text) > 500:
+                text = text[:500].rsplit(" ", 1)[0] + "..."
+            brief.append(
+                {
+                    "source": item.get("source", ""),
+                    "query": item.get("query", ""),
+                    "url": item.get("url", ""),
+                    "image_path": item.get("image_path"),
+                    "score": item.get("score", 0.0),
+                    "text": text,
+                }
+            )
+        return brief
+
     def _memory_for_prompt(self, memory: AgenticSessionMemory) -> Dict:
         return {
             "previously_asked_questions": memory.previously_asked_questions,
             "answered_questions": memory.answered_questions,
+            "claim_images_available": len(memory.images),
+            "claim_images": memory.images,
             "evidence_count": len(memory.evidence),
+            "recent_evidence": self._evidence_brief_for_prompt(memory),
             "confidence": memory.confidence,
             "iterations": memory.iterations,
             "tool_calls": memory.tool_calls,
@@ -126,15 +171,16 @@ class AgenticPipeline:
     ) -> Dict:
         if is_first_turn:
             incremental_prompt = (
-                "Return your first JSON action now. "
-                "Use action=tool_call unless you are certain enough to finalize."
+                "Return your first JSON action now. Choose the tool and query yourself. "
+                "Use action=tool_call unless the claim is already directly resolved by the provided memory."
             )
         else:
             incremental_prompt = (
                 "Tool result received. Use this incremental update to choose the next JSON action.\n\n"
                 f"Memory Update JSON:\n{json.dumps(self._memory_for_prompt(memory), indent=2)}\n\n"
-                f"Last Tool Result JSON:\n{json.dumps(last_tool_result or {}, indent=2)}\n\n"
-                "Return only JSON in the required action schema."
+                f"Last Tool Result JSON:\n{json.dumps(_convert_to_serializable(last_tool_result or {}), indent=2)}\n\n"
+                "Return only JSON in the required action schema. If you call text_search, write a targeted "
+                "query for the current evidence gap instead of merely repeating the full claim."
             )
 
         session_messages.append({"role": "user", "content": [{"type": "text", "text": incremental_prompt}]})
@@ -143,14 +189,21 @@ class AgenticPipeline:
         action = self._extract_json(raw)
 
         if not action:
+            fallback_query = ""
+            if last_tool_result:
+                fallback_query = ((last_tool_result.get("result", {}) or {}).get("query", "") or "").strip()
+            if not fallback_query and memory.previously_asked_questions:
+                fallback_query = memory.previously_asked_questions[-1]
+            if not fallback_query:
+                fallback_query = claim_text
             return {
                 "action": "tool_call",
                 "tool_name": "text_search",
                 "tool_args": {
-                    "query": (last_tool_result.get("result", {}) or {}).get("query", claim_text),
+                    "query": fallback_query,
                     "top_k": self.config.num_text_text_evidence,
                 },
-                "ask": "Need baseline retrieval to verify the claim",
+                "ask": "Recover from malformed controller response with targeted text retrieval",
             }
         return action
 
@@ -228,7 +281,7 @@ class AgenticPipeline:
             date=date,
             claim_text=claim_text,
             memory_json=json.dumps(self._memory_for_prompt(memory), indent=2),
-            evidence_json=json.dumps(evidence_snapshot, indent=2),
+            evidence_json=json.dumps(_convert_to_serializable(evidence_snapshot), indent=2),
         )
         messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
         raw = self.shared_models.generate_with_vlm(messages, max_new_tokens=4096)
@@ -332,10 +385,11 @@ class AgenticPipeline:
 
             if action.get("action") == "final_answer":
                 if memory.retrieval_tool_calls < self.controller_config.min_retrieval_tools_before_verdict:
+                    fallback_query = ask or claim_text
                     action = {
                         "action": "tool_call",
                         "tool_name": "text_search",
-                        "tool_args": {"query": claim_text, "top_k": self.config.num_text_text_evidence},
+                        "tool_args": {"query": fallback_query, "top_k": self.config.num_text_text_evidence},
                         "ask": "Need at least one retrieval result before finalizing",
                     }
                 else:
@@ -346,7 +400,7 @@ class AgenticPipeline:
                 action = {
                     "action": "tool_call",
                     "tool_name": "text_search",
-                    "tool_args": {"query": claim_text, "top_k": self.config.num_text_text_evidence},
+                    "tool_args": {"query": ask or claim_text, "top_k": self.config.num_text_text_evidence},
                     "ask": "Fallback retrieval due to malformed action",
                 }
 
@@ -355,6 +409,8 @@ class AgenticPipeline:
                 tool_name = "text_search"
 
             tool_args = action.get("tool_args", {}) or {}
+            if not (tool_args.get("query", "") or "").strip():
+                tool_args["query"] = ask or claim_text
             tool_result = self._execute_tool(
                 tool_name=tool_name,
                 tool_args=tool_args,
@@ -381,9 +437,6 @@ class AgenticPipeline:
             memory.insights.append(
                 f"iter={memory.iterations} tool_calls={memory.tool_calls} confidence={memory.confidence:.2f}"
             )
-
-            if memory.confidence >= self.controller_config.confidence_threshold and memory.retrieval_tool_calls > 0:
-                break
 
         if not result.veracity_verdict:
             final_output = self._run_finalize_step(

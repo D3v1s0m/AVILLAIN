@@ -237,25 +237,25 @@ Verify the claim by deciding which external tools to call. The tools can do acti
     - Args JSON: {{"query": "string", "top_k_image": int, "top_k_text": int}}
 
 # Tool Response JSON Format
-{
+{{
     "tool": "tool_name",
     "status": "ok|error",
-    "result": {
+    "result": {{
         "query": "string",
         "top_k": 10,
         "num_evidence": 10,
         "evidence": [
-            {
+            {{
                 "text": "optional evidence text",
                 "image_path": "optional image path",
                 "url": "optional url",
                 "score": 0.0,
                 "source": "text_text|image_text|image_image|text_image",
                 "query": "query used"
-            }
+            }}
         ]
-    }
-}
+    }}
+}}
 
 # Tool Result From Previous Step (JSON)
 {last_tool_result_json}
@@ -307,3 +307,120 @@ Do not call tools now. Return final JSON only.
 }}
 """
 
+
+# Stricter agentic prompts override the earlier defaults. These are intentionally
+# defined at the end of the module so AgenticPipeline imports the evidence-hungry
+# behavior without changing controller config.
+AGENTIC_CONTROLLER_PROMPT = """
+You are the controller for an agentic fact-checking pipeline. Your job is to gather enough high-quality evidence before any verdict is produced.
+
+Claim metadata:
+- Speaker: {speaker}
+- Date: {date}
+- Claim: {claim_text}
+
+Current memory JSON:
+{memory_json}
+
+Last tool result JSON:
+{last_tool_result_json}
+
+You must return only valid JSON. Do not include markdown, commentary, or chain-of-thought.
+
+Available actions:
+1. Call a retrieval tool:
+{{"action":"tool_call","tool_name":"text_search","tool_args":{{"query":"...","top_k":5}},"ask":"specific investigative question"}}
+
+2. Finalize when you judge that the current evidence is enough, or when focused retrieval has failed to close the decisive gap:
+{{"action":"final_answer","questions":["..."],"answers":["..."],"veracity_verdict":"Supported|Refuted|Not Enough Evidence|Conflicting Evidence/Cherrypicking","justification":"..."}}
+
+Retrieval tools:
+- text_search: search web/text evidence for the claim, entities, fact checks, source pages, and contextual background.
+- image_text_search: search text evidence conditioned on the claim images. Use this for image provenance, captions, source pages, fact checks, and posts discussing the images.
+- image_image_search: search visual matches or near-duplicates of claim images. Use this for origin, reuse, manipulation, satire, AI generation, or out-of-context images.
+
+Tool-query rules:
+- You control the retrieval query. Do not default to the exact claim text unless the full claim is genuinely the best search query.
+- For text_search, write a targeted query for the current subproblem: entity background, alleged event, named source, exact phrase, fact-check reference, original post, or contradiction.
+- If a previous query was broad, make the next query narrower using names, dates, distinctive objects, quoted phrases, source names, or provenance terms.
+- If a previous query was too narrow and returned little evidence, broaden it while preserving the key entities.
+
+Question quality rules:
+- Ask investigative questions that can be answered with evidence.
+- Do not ask weak yes/no restatements of the claim, such as "Are there reports of X?" or "Are there images of X?"
+- Prefer questions about identity, origin, provenance, context, date, location, authorship, and whether the claim media was reused, generated, altered, or satirical.
+- For image-text claims, at least one question must investigate where the images came from, not merely whether the event/object exists.
+- Good image-claim questions include: "Where did these images originate?", "Who created or first posted these images?", "Do reliable sources identify these images as AI-generated, staged, satirical, altered, or out of context?", and "What real-world entity or location is shown, if any?"
+- Good text-claim questions include: "What is the entity/person/event in the claim?", "What did reliable sources report?", "What primary or official source confirms or contradicts the claim?", and "What context changes the interpretation?"
+
+Agentic self-check before final_answer:
+- Do not finalize after only one retrieval result unless the result is a direct, reliable, claim-specific refutation or confirmation with clear source details.
+- If claim images exist, you must normally use image_text_search or image_image_search before finalizing.
+- For image-text claims, gather evidence for both: the textual claim and the image provenance/context.
+- Prefer direct evidence over generic search snippets. Direct evidence includes fact-check articles, original source pages, official statements, archived pages, creator posts, primary documents, or pages that explicitly discuss the claim images.
+- Treat generic mentions, unrelated image galleries, or pages that merely repeat the claim as insufficient.
+- If the last tool result is thin, off-topic, generic, or does not answer the investigative question, call another tool with a sharper query.
+- A question is answered only when evidence directly addresses it. Do not count retrieval quantity as proof.
+- If you finalize directly, return only the 2-3 decisive QA pairs that prove or refute the claim. Merge overlapping provenance, source, date, and location questions.
+- Do not include retrieval-process questions like "What reliable sources address the claim?" unless source reliability itself is the decisive fact.
+- Do not include separate questions for date, source, and location when one provenance question answers all three.
+- Your final questions must be questions you actually investigated during the tool loop, but you may merge duplicates into a broader version when the same evidence answers them.
+- Your final answers must summarize evidence you already collected. Do not add new facts, sources, or reasoning paths that were not part of your tool results.
+- The justification must be based on your selected final questions and answers, not a separate hidden analysis.
+
+When choosing the next action:
+- First, identify the biggest unresolved evidentiary gap.
+- Then choose the tool and query most likely to close that gap.
+- Use precise search queries with named entities, distinctive phrases, image descriptions, alleged source/platform, dates, and terms like fact check, origin, AI-generated, satire, creator, archive, or reverse image when helpful.
+- If evidence suggests the claim is false due to image misuse, keep probing for the original image/source or a reliable fact-check explaining the misuse.
+- If evidence suggests the claim is true, seek corroboration from an independent or primary source.
+- If evidence remains inadequate after several focused searches, finalize as Not Enough Evidence and explain exactly what was searched and what was missing.
+"""
+
+
+AGENTIC_FINAL_ANSWER_PROMPT = """
+You are writing the final output for a fact-checking pipeline. Use only the supplied evidence. Do not invent sources, dates, URLs, image origins, or answers.
+
+Claim metadata:
+- Speaker: {speaker}
+- Date: {date}
+- Claim: {claim_text}
+
+Memory JSON:
+{memory_json}
+
+Evidence JSON:
+{evidence_json}
+
+Return only valid JSON with this schema:
+{{"questions":["..."],"answers":["..."],"veracity_verdict":"Supported|Refuted|Not Enough Evidence|Conflicting Evidence/Cherrypicking","justification":"..."}}
+
+Final answer rules:
+- Return 2-3 questions when possible. Return 4 only if the fourth question adds a distinct decisive fact.
+- Questions must be the strongest investigative questions actually supported by the collected evidence.
+- Prefer questions that directly decide the claim: what the image/story originally showed, whether the alleged source/event is real, whether the date/location/person matches, and what primary or reliable source confirms the context.
+- Merge overlapping questions. A single provenance question should cover original source, actual context, date, and location when the same evidence answers them.
+- Do not include retrieval-process questions such as "What reliable fact-checking sources address the claim?" or "Are there independent verifications?" unless that is the only decisive issue.
+- Do not include weak yes/no questions that merely repeat the claim.
+- Do not include a question unless you can answer it from evidence_json.
+- Every answer must be specific, evidence-grounded, and useful. Keep each answer to 1-2 concise sentences unless more detail is essential.
+- Do not output placeholders such as "No answer available" or "Insufficient evidence to produce a definitive answer."
+- If a question has no evidence-grounded answer, remove the question.
+- If evidence_json is empty or irrelevant, return no more than one question and use veracity_verdict "Not Enough Evidence".
+- For image-text claims, the final questions should normally include an image provenance/context question when image evidence exists.
+- The verdict must follow the evidence, not the number of tool calls.
+- Do not mention tool calls, latest searches, evidence numbers, memory, or evidence_json in the questions, answers, or justification.
+- Avoid saying "there is no evidence" as the main proof when stronger positive evidence shows the image/story came from another source, date, place, or context.
+
+Verdict guidance:
+- Supported: reliable evidence confirms the central claim.
+- Refuted: reliable evidence contradicts the central claim, shows decisive missing context, or shows claim media is AI-generated, altered, satirical, unrelated, or out of context.
+- Conflicting Evidence: credible sources disagree and the conflict cannot be resolved from the supplied evidence.
+- Not Enough Evidence: supplied evidence does not directly confirm or refute the central claim after focused retrieval.
+
+Justification rules:
+- Explain the decisive evidence in one concise paragraph of 2-4 sentences.
+- Mention why the verdict follows from the evidence.
+- If the verdict is Not Enough Evidence, state the specific missing evidence instead of using a generic fallback.
+- Do not introduce major facts in the justification that are absent from the selected answers.
+"""
