@@ -1,5 +1,6 @@
 """Nomic nomic-embed-text-v2-moe text embedding model."""
 
+import gc
 from dataclasses import dataclass
 from typing import List, Union
 
@@ -109,12 +110,17 @@ class NomicEmbedding:
         )
         encoded_input = {k: v.to(self.device) for k, v in encoded_input.items()}
 
-        with torch.no_grad():
+        with torch.inference_mode():
             model_output = self.model(**encoded_input)
             embeddings = self._mean_pooling(model_output, encoded_input['attention_mask'])
             embeddings = F.normalize(embeddings, p=2, dim=1)
 
-        return embeddings.float().cpu().numpy()
+        result = embeddings.float().cpu().numpy()
+        del encoded_input, model_output, embeddings
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        return result
 
     def to(self, device: str) -> "NomicEmbedding":
         """Move model to specified device."""

@@ -7,8 +7,11 @@ Tools are retrieval-only and return JSON payloads.
 
 import json
 import re
+import gc
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+
+import torch
 
 from .agentic_tools import AgenticTools, TOOL_CALL_FORMATS
 from .base_agent import AgentAnalysis, EvidenceItem, SharedModels
@@ -161,6 +164,12 @@ class AgenticPipeline:
             "insights": memory.insights[-8:],
         }
 
+    def _trim_controller_messages(self, session_messages: List[Dict], keep_recent: int = 6):
+        """Keep bootstrap instructions plus recent turns; memory carries the long-term state."""
+        if len(session_messages) <= keep_recent + 1:
+            return
+        del session_messages[1 : -keep_recent]
+
     def _run_controller_step(
         self,
         session_messages: List[Dict],
@@ -186,6 +195,7 @@ class AgenticPipeline:
         session_messages.append({"role": "user", "content": [{"type": "text", "text": incremental_prompt}]})
         raw = self.shared_models.generate_with_vlm(session_messages, max_new_tokens=4096)
         session_messages.append({"role": "assistant", "content": [{"type": "text", "text": raw}]})
+        self._trim_controller_messages(session_messages)
         action = self._extract_json(raw)
 
         if not action:
@@ -462,5 +472,10 @@ class AgenticPipeline:
 
         if not result.veracity_verdict:
             result.veracity_verdict = "Not Enough Evidence"
+
+        del session_messages, last_tool_result, memory
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         return result

@@ -1,5 +1,6 @@
 """Qwen3-Embedding text embedding model."""
 
+import gc
 from dataclasses import dataclass
 from typing import List, Optional, Union
 
@@ -109,7 +110,12 @@ class Qwen3Embedding:
             )
             embeddings = F.normalize(embeddings, p=2, dim=1)
 
-        return embeddings.float().cpu().numpy()
+        result = embeddings.float().cpu().numpy()
+        del batch_dict, outputs, embeddings
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        return result
 
     def to(self, device: str) -> "Qwen3Embedding":
         """Move model to specified device."""

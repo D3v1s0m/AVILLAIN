@@ -1,5 +1,6 @@
 """Qwen3-VL model wrapper for the multi-agent pipeline."""
 
+import gc
 import torch
 from dataclasses import dataclass
 from typing import List, Dict, Optional
@@ -24,10 +25,12 @@ class Qwen3VLModel:
         self,
         model_name: str = "Qwen/Qwen3-VL-8B-Thinking",
         device: str = "cuda:0",
+        compile_model: bool = False,
         generation_config: Optional[GenerationConfig] = None
     ):
         self.model_name = model_name
         self.device = device
+        self.compile_model = compile_model
         self.generation_config = generation_config or GenerationConfig()
         
         self._model = None
@@ -45,7 +48,8 @@ class Qwen3VLModel:
                 trust_remote_code=True,  # Required for Qwen3-VL
                 attn_implementation="flash_attention_3"
             )
-            self._model = torch.compile(self._model)
+            if self.compile_model:
+                self._model = torch.compile(self._model)
             self._model.eval()
 
             self._processor = AutoProcessor.from_pretrained(
@@ -110,20 +114,23 @@ class Qwen3VLModel:
             "use_cache": True,
         }
         
-        with torch.no_grad():
+        with torch.inference_mode():
             generated_ids = model.generate(**inputs, **gen_kwargs)
         
         # Trim input tokens from output
-        generated_ids_trimmed = [
-            out_ids[len(in_ids):]
-            for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-        ]
+        input_len = inputs.input_ids.shape[1]
+        generated_ids_trimmed = generated_ids[:, input_len:].detach().cpu()
         
         output_text = processor.batch_decode(
             generated_ids_trimmed,
             skip_special_tokens=True,
             clean_up_tokenization_spaces=False
         )[0]
+
+        del inputs, generated_ids, generated_ids_trimmed
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         
         return output_text
     
@@ -151,4 +158,3 @@ class Qwen3VLModel:
         """
         output = self.generate(messages, generation_config, **kwargs)
         return self.extract_response_after_think(output)
-

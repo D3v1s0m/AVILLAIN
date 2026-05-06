@@ -56,6 +56,7 @@ class AgentConfig:
     text_model_type: str = "qwen"  # 'qwen', 'mxbai', or 'nomic'
     image_model: str = "OpenSearch-AI/Ops-MM-embedding-v1-7B"
     vlm_model: str = "Qwen/Qwen3-VL-8B-Thinking"  # VLM for all agents
+    compile_vlm: bool = False
     reranker_model: str = "Qwen/Qwen3-Reranker-8B"  # Reranker model
 
 
@@ -131,6 +132,7 @@ class SharedModels:
                 self._vlm = Qwen3VLModel(
                     model_name=self.config.vlm_model,
                     device=self.device,
+                    compile_model=self.config.compile_vlm,
                     generation_config=GenerationConfig()
                 )
                 self._vlm.load()
@@ -526,4 +528,3 @@ class BaseAgent(ABC):
             f'image_related_store_image_{self.config.target}',
             str(claim_id)
         )
-

@@ -1,4 +1,5 @@
 import math
+import gc
 from typing import List, Optional, TypeAlias, Union
 
 import torch
@@ -136,6 +137,7 @@ class OpsMMEmbeddingV1(nn.Module):
         with torch.inference_mode():
             embeddings = self.encode_input(inputs)
 
+        del inputs
         return embeddings
 
     def get_text_embeddings(
@@ -198,10 +200,18 @@ class OpsMMEmbeddingV1(nn.Module):
             batch_emb = self.embed(texts=batch_texts, images=batch_images, instruction=instruction)
 
             all_embeddings.append(batch_emb.cpu())
+            del batch_emb
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             progress.update(1)
 
         progress.close()
-        return torch.cat(all_embeddings, dim=0).to(self.device)
+        output = torch.cat(all_embeddings, dim=0)
+        del all_embeddings
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        return output
 
     def forward(self, **inputs) -> torch.Tensor:
         """Alias for encode_input"""

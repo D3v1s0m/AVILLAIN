@@ -1,5 +1,6 @@
 """MixedBread mxbai-embed-large-v1 text embedding model."""
 
+import gc
 from dataclasses import dataclass
 from typing import List, Union
 
@@ -118,7 +119,7 @@ class MxbaiEmbedding:
         )
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
-        with torch.no_grad():
+        with torch.inference_mode():
             outputs = self.model(**inputs).last_hidden_state
             embeddings = self._pooling(
                 outputs, inputs['attention_mask'], self.pooling_strategy
@@ -127,6 +128,10 @@ class MxbaiEmbedding:
             norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
             embeddings = embeddings / norms
 
+        del inputs, outputs
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         return embeddings
 
     def to(self, device: str) -> "MxbaiEmbedding":

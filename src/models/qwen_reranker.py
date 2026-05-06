@@ -1,5 +1,6 @@
 """Qwen3-Reranker-8B for text reranking."""
 
+import gc
 import torch
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
@@ -120,6 +121,10 @@ class Qwen3Reranker:
             inputs = self._process_inputs(pairs)
             batch_scores = self._compute_logits(inputs)
             all_scores.extend(batch_scores)
+            del inputs, batch_scores, pairs
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
         
         # Create results with original indices
         results = [(i, doc, score) for i, (doc, score) in enumerate(zip(documents, all_scores))]

@@ -205,6 +205,7 @@ Examples:
     text_model_type = get_nested(cfg, 'models', 'text_model_type', default='qwen')
     image_model = get_nested(cfg, 'models', 'image_model', default='OpenSearch-AI/Ops-MM-embedding-v1-7B')
     vlm_model = get_nested(cfg, 'models', 'vlm_model', default='Qwen/Qwen3-VL-8B-Thinking')
+    compile_vlm = get_nested(cfg, 'models', 'compile_vlm', default=False)
     reranker_model = get_nested(cfg, 'models', 'reranker_model', default='Qwen/Qwen3-Reranker-8B')
 
     # Evidence configuration
@@ -255,6 +256,7 @@ Examples:
         text_model_type=text_model_type,
         image_model=image_model,
         vlm_model=vlm_model,
+        compile_vlm=compile_vlm,
         reranker_model=reranker_model
     )
 
@@ -294,6 +296,7 @@ Examples:
     print(f"  Text Model: {agent_config.text_model} ({agent_config.text_model_type})")
     print(f"  Image Model: {agent_config.image_model}")
     print(f"  VLM Model: {agent_config.vlm_model}")
+    print(f"  Compile VLM: {'Enabled' if agent_config.compile_vlm else 'Disabled'}")
     if use_reranker:
         print(f"  Reranker: {agent_config.reranker_model}")
     print(f"  Device: {agent_config.device}")

@@ -1,6 +1,8 @@
 """MixedBread mxbai-rerank-large-v1 for text reranking."""
 
 
+import gc
+import torch
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
 
@@ -79,6 +81,10 @@ class MxbaiReranker:
                 result['score']       # relevance score
             ))
         
+        del results
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         return output
     
     def rerank_with_indices(
@@ -125,5 +131,9 @@ class MxbaiReranker:
                 result['score']
             ))
         
+        del results
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         return output
 
